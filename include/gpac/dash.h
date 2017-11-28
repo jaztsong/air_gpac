@@ -140,6 +140,7 @@ struct _gf_dash_io
 	/*get the average download rate for the session. If no session is specified, gets the max download rate
 	for the client (used for bandwidth simulation in local files)*/
 	u32 (*get_bytes_per_sec)(GF_DASHFileIO *dashio, GF_DASHFileIOSession session);
+	u32 (*get_air_bytes_per_sec)(GF_DASHFileIO *dashio, GF_DASHFileIOSession session);
 	/*get the total size on bytes for the session*/
 	u32 (*get_total_size)(GF_DASHFileIO *dashio, GF_DASHFileIOSession session);
 	/*get the total size on bytes for the session*/
@@ -512,6 +513,8 @@ typedef enum {
 	GF_DASH_ALGO_GPAC_LEGACY_BUFFER,
 
 	GF_DASH_ALGO_BBA0,
+	GF_DASH_ALGO_AIR,
+	GF_DASH_ALGO_FESTIVE,
 
 	GF_DASH_ALGO_BOLA_FINITE,
 	GF_DASH_ALGO_BOLA_BASIC,

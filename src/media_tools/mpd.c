@@ -1054,7 +1054,9 @@ GF_Err gf_mpd_complete_from_dom(GF_XMLNode *root, GF_MPD *mpd, const char *defau
 			if (!strcmp(att->value, "static")) mpd->type = GF_MPD_TYPE_STATIC;
 			else if (!strcmp(att->value, "dynamic")) mpd->type = GF_MPD_TYPE_DYNAMIC;
 		} else if (!strcmp(att->name, "availabilityStartTime")) {
-			mpd->availabilityStartTime = gf_mpd_parse_date(att->value);
+                //lsong2: fake live content
+			/* mpd->availabilityStartTime = gf_mpd_parse_date(att->value); */
+			mpd->availabilityStartTime = gf_net_get_utc();
 		} else if (!strcmp(att->name, "availabilityEndTime")) {
 			mpd->availabilityEndTime = gf_mpd_parse_date(att->value);
 		} else if (!strcmp(att->name, "publishTime")) {

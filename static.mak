@@ -1,6 +1,5 @@
 
 NEED_LOCAL_LIB="no"
-LINKLIBS=
 
 ifeq ($(DISABLE_CORE_TOOLS), no)
 
@@ -362,3 +361,5 @@ OBJS+=../modules/netctrl/netctrl.o
 
 endif
 
+#zmq
+EXTRALIBS+=-lzmq

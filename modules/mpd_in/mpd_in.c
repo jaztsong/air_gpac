@@ -696,6 +696,15 @@ u64 mpdin_dash_io_get_utc_start_time(GF_DASHFileIO *dashio, GF_DASHFileIOSession
 }
 
 
+u32 mpdin_dash_io_get_air_bytes_per_sec(GF_DASHFileIO *dashio, GF_DASHFileIOSession session)
+{
+	u32 bps=0;
+//	GF_DownloadSession *sess = (GF_DownloadSession *)session;
+	if (session) {
+		gf_dm_sess_get_air_stats((GF_DownloadSession *)session, &bps);
+	}
+	return bps;
+}
 
 u32 mpdin_dash_io_get_bytes_per_sec(GF_DASHFileIO *dashio, GF_DASHFileIOSession session)
 {
@@ -983,6 +992,7 @@ GF_Err MPD_ConnectService(GF_InputService *plug, GF_ClientService *serv, const c
 	mpdin->dash_io.get_header_value = mpdin_dash_io_get_header_value;
 	mpdin->dash_io.get_utc_start_time = mpdin_dash_io_get_utc_start_time;
 	mpdin->dash_io.get_bytes_per_sec = mpdin_dash_io_get_bytes_per_sec;
+	mpdin->dash_io.get_air_bytes_per_sec = mpdin_dash_io_get_air_bytes_per_sec;
 	mpdin->dash_io.get_total_size = mpdin_dash_io_get_total_size;
 	mpdin->dash_io.get_bytes_done = mpdin_dash_io_get_bytes_done;
 	mpdin->dash_io.on_dash_event = mpdin_dash_io_on_dash_event;
@@ -1019,6 +1029,12 @@ GF_Err MPD_ConnectService(GF_InputService *plug, GF_ClientService *serv, const c
 	}
 	else if (!strcmp(opt, "BBA-0")) {
 		mpdin->adaptation_algorithm = GF_DASH_ALGO_BBA0;
+	}
+	else if (!strcmp(opt, "Air")) {
+		mpdin->adaptation_algorithm = GF_DASH_ALGO_AIR;
+	}
+	else if (!strcmp(opt, "FESTIVE")) {
+		mpdin->adaptation_algorithm = GF_DASH_ALGO_FESTIVE;
 	}
 	else if (!strcmp(opt, "BOLA_FINITE")) {
 		mpdin->adaptation_algorithm = GF_DASH_ALGO_BOLA_FINITE;

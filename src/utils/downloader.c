@@ -31,6 +31,7 @@
 #include <gpac/base_coding.h>
 #include <gpac/tools.h>
 #include <gpac/cache.h>
+#include "zhelpers.h"
 
 #ifndef GPAC_DISABLE_CORE_TOOLS
 
@@ -111,6 +112,7 @@ struct __gf_download_session
 
 	struct __gf_download_manager *dm;
 	GF_Thread *th;
+	GF_Thread *th_air;
 	GF_Mutex *mx;
 
 	Bool in_callback, destroy;
@@ -140,6 +142,7 @@ struct __gf_download_session
 	u64 start_time;
 	u64 chunk_run_time;
 	u32 bytes_per_sec;
+	u32 air_bytes_per_sec;
 	u64 start_time_utc;
 	Bool last_chunk_found;
 	Bool connection_close;
@@ -210,6 +213,7 @@ struct __gf_download_manager
 	GF_List *cache_entries;
 	/* FIXME : should be placed in DownloadedCacheEntry maybe... */
 	GF_List *partial_downloads;
+
 #ifdef GPAC_HAS_SSL
 	SSL_CTX *ssl_ctx;
 #endif
@@ -766,6 +770,12 @@ void gf_dm_sess_del(GF_DownloadSession *sess)
 		gf_th_del(sess->th);
 		sess->th = NULL;
 	}
+	if (sess->th_air) {
+			gf_sleep(1);
+		gf_th_stop(sess->th_air);
+		gf_th_del(sess->th_air);
+		sess->th_air = NULL;
+	}
 
 	if (sess->dm) gf_list_del_item(sess->dm->sessions, sess);
 
@@ -1150,6 +1160,47 @@ static u32 gf_dm_session_thread(void *par)
 	return 1;
 }
 
+static void gf_dm_sess_update_air(void *par)
+{
+        //connect zmq
+        // lsong air throughput implementation
+        void *zmq_context;
+        void *zmq_subscriber;
+        zmq_context = zmq_ctx_new ();
+        zmq_subscriber = zmq_socket (zmq_context, ZMQ_SUB);
+        int conflate = 1;
+        int rc = zmq_setsockopt(zmq_subscriber, ZMQ_CONFLATE, &conflate, sizeof(conflate));
+        assert (rc == 0);
+        rc = zmq_connect (zmq_subscriber, "tcp://localhost:5556");
+        assert (rc == 0);
+        rc = zmq_setsockopt (zmq_subscriber, ZMQ_SUBSCRIBE, "", 0);
+        assert (rc == 0);
+        printf("lsong2: zmq initiate success!\n");
+
+        GF_DownloadSession *sess = (GF_DownloadSession *)par;
+        float total_temp;
+        u8 update_count;
+        while (!sess->destroy) {
+                int update_nbr;
+                /* float total_temp = 100; */
+                /* gf_mx_p(sess->mx); */
+                total_temp = 0.0;
+                update_count = 0;
+                for (update_nbr = 0; update_nbr < 3; update_nbr++) {
+                        char *string = s_recv (zmq_subscriber);
+                        float throughput;
+                        sscanf (string, "%f", &throughput);
+                        /* printf("lsong2: zmq get update %5.2f!\n",throughput); */
+                        if (throughput > 0)
+                                total_temp += 1/throughput, update_count++;
+                        free (string);
+                }
+                sess->air_bytes_per_sec = (u32) (update_count)*1000000/total_temp/8;
+                /* printf("lsong2: zmq air_bytes_per_sec %d!\n",sess->air_bytes_per_sec); */
+                gf_sleep(0);
+
+        }
+}
 
 GF_EXPORT
 GF_DownloadSession *gf_dm_sess_new_simple(GF_DownloadManager * dm, const char *url, u32 dl_flags,
@@ -1216,6 +1267,16 @@ GF_DownloadSession *gf_dm_sess_new(GF_DownloadManager *dm, const char *url, u32 
 		sess->dm = dm;
 		gf_list_add(dm->sessions, sess);
 	}
+    if(strstr(sess->orig_url, ".mpd") != NULL){
+            if (sess->th_air) {
+                    GF_LOG(GF_LOG_WARNING, GF_LOG_NETWORK, ("[HTTP] Air thread started - ignoring start\n"));
+            }else{
+                    printf("lsong2: create air thread for session flags %s\n",sess->orig_url);
+                    sess->th_air = gf_th_new("Air");
+                    if (!sess->th_air) return GF_OUT_OF_MEM;
+                    gf_th_run(sess->th_air, gf_dm_sess_update_air, sess);
+            }
+    }
 	return sess;
 }
 
@@ -1644,6 +1705,8 @@ GF_Err gf_dm_sess_process(GF_DownloadSession *sess)
 		gf_th_run(sess->th, gf_dm_session_thread, sess);
 		return GF_OK;
 	}
+
+
 	/*otherwise do a synchronous download*/
 	go = GF_TRUE;
 	while (go) {
@@ -1768,6 +1831,8 @@ GF_DownloadManager *gf_dm_new(GF_Config *cfg)
 		GF_LOG(GF_LOG_ERROR, GF_LOG_NETWORK, ("[Downloader] Failed to allocate downloader\n"));
 		return NULL;
 	}
+
+
 	dm->sessions = gf_list_new();
 	dm->cache_entries = gf_list_new();
 	dm->credentials = gf_list_new();
@@ -2150,14 +2215,14 @@ static void dm_sess_update_download_rate(GF_DownloadSession * sess, Bool always_
 	if (sess->start_time) {
 		runtime += (gf_sys_clock_high_res() - sess->start_time);
 	}
-	if (!runtime) runtime=1;
+    if (!runtime) runtime=1;
 
-	sess->bytes_per_sec = (u32) ((1000000 * (u64) sess->bytes_done) / runtime);
+    sess->bytes_per_sec = (u32) ((1000000 * (u64) sess->bytes_done) / runtime);
 
-	if (sess->chunked) {
-		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[HTTP] bandwidth estimation: download time "LLD" us (chunk download time "LLD" us) - bytes %u - rate %u kbps\n", runtime, sess->chunk_run_time, sess->bytes_done, sess->bytes_per_sec*8/1000));
+    if (sess->chunked) {
+            GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[HTTP] bandwidth estimation: download time "LLD" us (chunk download time "LLD" us) - bytes %u - rate %u kbps\n", runtime, sess->chunk_run_time, sess->bytes_done, sess->bytes_per_sec*8/1000));
 	} else {
-		GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[HTTP] bandwidth estimation: download time "LLD" us - bytes %u - rate %u kbps\n", runtime, sess->bytes_done, sess->bytes_per_sec*8/1000));
+            GF_LOG(GF_LOG_INFO, GF_LOG_NETWORK, ("[HTTP] bandwidth estimation: download time "LLD" us - bytes %u - rate %u kbps\n", runtime, sess->bytes_done, sess->bytes_per_sec*8/1000));
 	}
 }
 
@@ -2321,6 +2386,14 @@ GF_Err gf_dm_sess_fetch_data(GF_DownloadSession *sess, char *buffer, u32 buffer_
 }
 
 GF_EXPORT
+GF_Err gf_dm_sess_get_air_stats(GF_DownloadSession * sess, u32 *bytes_per_sec)
+{
+	if (!sess) return GF_BAD_PARAM;
+    /* printf("lsong2:get_air_stats %s\n",sess->orig_url); */
+	if (bytes_per_sec) *bytes_per_sec = sess->air_bytes_per_sec;
+	return GF_OK;
+}
+GF_EXPORT
 GF_Err gf_dm_sess_get_stats(GF_DownloadSession * sess, const char **server, const char **path, u32 *total_size, u32 *bytes_done, u32 *bytes_per_sec, GF_NetIOStatus *net_status)
 {
 	if (!sess) return GF_BAD_PARAM;
@@ -2345,6 +2418,12 @@ u64 gf_dm_sess_get_utc_start(GF_DownloadSession * sess)
 	return sess->start_time_utc;
 }
 
+GF_EXPORT
+u64 gf_dm_sess_get_air_bytes_per_sec(GF_DownloadSession * sess)
+{
+	if (!sess) return 0;
+	return sess->air_bytes_per_sec;
+}
 GF_EXPORT
 const char *gf_dm_sess_get_cache_name(GF_DownloadSession * sess)
 {
