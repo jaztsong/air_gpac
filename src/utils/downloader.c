@@ -142,7 +142,8 @@ struct __gf_download_session
 	u64 start_time;
 	u64 chunk_run_time;
 	u32 bytes_per_sec;
-	u32 air_bytes_per_sec;
+	u32 air_bytes_per_sec_mean;
+	u32 air_bytes_per_sec_std;
 	u64 start_time_utc;
 	Bool last_chunk_found;
 	Bool connection_close;
@@ -1178,24 +1179,18 @@ static void gf_dm_sess_update_air(void *par)
         printf("lsong2: zmq initiate success!\n");
 
         GF_DownloadSession *sess = (GF_DownloadSession *)par;
-        float total_temp;
-        u8 update_count;
         while (!sess->destroy) {
                 int update_nbr;
-                /* float total_temp = 100; */
                 /* gf_mx_p(sess->mx); */
-                total_temp = 0.0;
-                update_count = 0;
-                for (update_nbr = 0; update_nbr < 3; update_nbr++) {
+                float throughput_mean,throughput_std;
+                for (update_nbr = 0; update_nbr < 1; update_nbr++) {
                         char *string = s_recv (zmq_subscriber);
-                        float throughput;
-                        sscanf (string, "%f", &throughput);
-                        /* printf("lsong2: zmq get update %5.2f!\n",throughput); */
-                        if (throughput > 0)
-                                total_temp += 1/throughput, update_count++;
+                        sscanf (string, "%f %f", &throughput_mean,&throughput_std);
+                        /* printf("lsong2: zmq get update %5.2f!\n",throughput_mean); */
                         free (string);
                 }
-                sess->air_bytes_per_sec = (u32) (update_count)*1000000/total_temp/8;
+                sess->air_bytes_per_sec_mean = (u32) throughput_mean*1000000/8;
+                sess->air_bytes_per_sec_std = (u32) throughput_std*1000000/8;
                 /* printf("lsong2: zmq air_bytes_per_sec %d!\n",sess->air_bytes_per_sec); */
                 gf_sleep(0);
 
@@ -2386,11 +2381,12 @@ GF_Err gf_dm_sess_fetch_data(GF_DownloadSession *sess, char *buffer, u32 buffer_
 }
 
 GF_EXPORT
-GF_Err gf_dm_sess_get_air_stats(GF_DownloadSession * sess, u32 *bytes_per_sec)
+GF_Err gf_dm_sess_get_air_stats(GF_DownloadSession * sess, u32 *bytes_per_sec_mean, u32 *bytes_per_sec_std)
 {
 	if (!sess) return GF_BAD_PARAM;
     /* printf("lsong2:get_air_stats %s\n",sess->orig_url); */
-	if (bytes_per_sec) *bytes_per_sec = sess->air_bytes_per_sec;
+	if (bytes_per_sec_mean) *bytes_per_sec_mean = sess->air_bytes_per_sec_mean;
+	if (bytes_per_sec_std) *bytes_per_sec_std = sess->air_bytes_per_sec_std;
 	return GF_OK;
 }
 GF_EXPORT
@@ -2422,7 +2418,7 @@ GF_EXPORT
 u64 gf_dm_sess_get_air_bytes_per_sec(GF_DownloadSession * sess)
 {
 	if (!sess) return 0;
-	return sess->air_bytes_per_sec;
+	return sess->air_bytes_per_sec_mean;
 }
 GF_EXPORT
 const char *gf_dm_sess_get_cache_name(GF_DownloadSession * sess)

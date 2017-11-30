@@ -270,6 +270,8 @@ struct __dash_group
 	//stats of last downloaded segment
 	u32 total_size, bytes_per_sec;
 
+    u32 air_bytes_per_sec_mean;
+    u32 air_bytes_per_sec_std;
 
 	Bool segment_must_be_streamed;
 	Bool broken_timing;
@@ -2521,6 +2523,12 @@ static GF_Err dash_do_rate_monitor_default(GF_DashClient *dash, GF_DASH_Group *g
 	}
 	return GF_OK;
 }
+static float get_gaussian_pdf(float x, float mean, float std)
+{
+        float PI = 3.141592653;
+        return 1.0/sqrt(2*PI*pow(std,2))*exp(-pow(x-mean,2)/( 2*pow(std,2) ));
+
+}
 
 static s32 dash_do_rate_adaptation_airtime(GF_DashClient *dash, GF_DASH_Group *group, GF_DASH_Group *base_group,
 												u32 dl_rate, Double speed, Double max_available_speed, Bool force_lower_complexity,
@@ -2530,6 +2538,7 @@ static s32 dash_do_rate_adaptation_airtime(GF_DashClient *dash, GF_DASH_Group *g
 	Bool do_switch;
 	GF_MPD_Representation *new_rep;
 	s32 new_index = group->active_rep_index;
+	s32 current_index = new_index;
 
 	/* records the number of representations between the current one and the next chosen one */
 	u32 nb_inter_rep = 0;
@@ -2540,25 +2549,31 @@ static s32 dash_do_rate_adaptation_airtime(GF_DashClient *dash, GF_DASH_Group *g
 	/*find best bandwidth that fits our bitrate and playing speed*/
 	new_rep = NULL;
 
-    dl_rate = 8*dash->dash_io->get_air_bytes_per_sec(dash->dash_io, dash->mpd_dnload);
-    printf("lsong2: air dl_rate %5.2f Mbps\n",(float)dl_rate/1000000.0);
-    /* int update_nbr; */
-    /* /1* float total_temp = 100; *1/ */
-    /* float total_temp = 0; */
-    /* u8 update_count = 0; */
-    /* for (update_nbr = 0; update_nbr < 1; update_nbr++) { */
-    /*         char *string = s_recv (dash->zmq_subscriber); */
-    /*         float throughput; */
-    /*         sscanf (string, "%f", &throughput); */
-    /*         /1* printf("lsong2: zmq get update %5.2f!\n",throughput); *1/ */
-    /*         if (throughput > 0) */
-    /*                 total_temp += 1/throughput, update_count++; */
-    /*         free (string); */
-    /* } */
-    /* total_temp = (update_count)/total_temp; */
-    /* printf ("Average throughput is %f Mbps\n",  (total_temp )); */
-    /* dl_rate = (total_temp*1000000); */
+    dl_rate = 8*group->air_bytes_per_sec_mean;
+    u32 rate_switch_guide = 8*group->air_bytes_per_sec_std/1000000.0;
 
+    float max_pdf = 0.7;
+	for (k = 0; k<gf_list_count(group->adaptation_set->representations) && do_switch; k++) {
+		GF_MPD_Representation *arep = gf_list_get(group->adaptation_set->representations, k);
+        /* printf("lsong2:PDF of rate %d is %f.\n",arep->bandwidth, */
+        /*                 get_gaussian_pdf((float)arep->bandwidth/1000000.0, */
+        /*                         (float)8*group->air_bytes_per_sec_mean/1000000.0, */
+        /*                         (float)8*group->air_bytes_per_sec_std/1000000.0)); */
+        float temp_pdf = get_gaussian_pdf((float)arep->bandwidth/1000000.0,
+                        (float)8*group->air_bytes_per_sec_mean/1000000.0,
+                        0.5);
+        if(8*group->air_bytes_per_sec_mean >= arep->bandwidth)
+                dl_rate = arep->bandwidth;
+        else if(temp_pdf >= max_pdf){
+                max_pdf = temp_pdf;
+                dl_rate = arep->bandwidth;
+        }
+    }
+    /* printf("lsong2: air_TH %5.2f|%5.2f Mbps. TH = %5.2f Mbps. Choose %5.2f Mbps.\n", */
+    /*                 (float)8*group->air_bytes_per_sec_mean/1000000.0, */
+    /*                 (float)8*group->air_bytes_per_sec_std/1000000.0, */
+    /*                 (float)8*group->bytes_per_sec/1000000.0, */
+    /*                 (float)dl_rate/1000000.0); */
 
 	/* for each playable representation, if we still need to switch, evaluate it */
 	for (k = 0; k<gf_list_count(group->adaptation_set->representations) && do_switch; k++) {
@@ -2573,13 +2588,12 @@ static s32 dash_do_rate_adaptation_airtime(GF_DashClient *dash, GF_DASH_Group *g
 			continue;
 		}
 		/* Only try to switch to a representation, if download rate is greater than its bitrate */
-		GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASH] Air: AS#%d tries to match for requested bandwidth %f  (AS bitrate %d)!\n", 1 + gf_list_find(group->period->adaptation_sets, group->adaptation_set), dl_rate, arep->bandwidth));
+		GF_LOG(GF_LOG_DEBUG, GF_LOG_DASH, ("[DASH] Air: AS#%d tries to match for requested bandwidth %d  (AS bitrate %d)!\n", 1 + gf_list_find(group->period->adaptation_sets, group->adaptation_set), dl_rate, arep->bandwidth));
 		/* if (dl_rate >= (double)arep->bandwidth*100/(double)group->current_downloaded_segment_duration + arep->bandwidth) { */
 		if (dl_rate >= arep->bandwidth) {
 
 			/* First check if we are adapting to CPU */
 			if (!dash->disable_speed_adaptation && force_lower_complexity) {
-                    printf("lsong2: force_lower_complexity set\n");
 
 				/*try to switch to highest quality below the current one*/
 				if ((arep->quality_ranking < rep->quality_ranking) ||
@@ -2611,7 +2625,6 @@ static s32 dash_do_rate_adaptation_airtime(GF_DashClient *dash, GF_DASH_Group *g
 
 					/* agressive switching is configured in the GPAC configuration */
 					if (dash->agressive_switching) {
-                            printf("lsong2: agressive_switch set\n");
 						/*be agressive, try to switch to highest bitrate below available download rate*/
 						if (arep->bandwidth > new_rep->bandwidth) {
 							if (new_rep->bandwidth > rep->bandwidth) {
@@ -2665,6 +2678,13 @@ static s32 dash_do_rate_adaptation_airtime(GF_DashClient *dash, GF_DASH_Group *g
 				new_index = group->active_rep_index;
 			}
 		}
+        if(new_index > current_index && rate_switch_guide == 1){
+                new_index = current_index;
+                printf("Don't go up!\n");
+        }else if(new_index < current_index && rate_switch_guide == 2){
+                new_index = current_index;
+                printf("Don't go down!\n");
+        }
 	}
 
 	return new_index;
@@ -5640,6 +5660,11 @@ static DownloadGroupStatus dash_download_group_download(GF_DashClient *dash, GF_
 			gf_dash_update_buffering(group, dash);
 		}
 		dash_store_stats(dash, group, Bps, file_size);
+        //lsong2 update air throughput
+        group->air_bytes_per_sec_mean = dash->dash_io->get_air_bytes_per_sec_mean(dash->dash_io, dash->mpd_dnload);
+        group->air_bytes_per_sec_std = dash->dash_io->get_air_bytes_per_sec_std(dash->dash_io, dash->mpd_dnload);
+        /* printf("lsong2: update group air_bytes_per_sec %d\n",group->air_bytes_per_sec); */
+
 
 		/* download enhancement representation of this segment*/
 		if ((representation_index != group->force_max_rep_index) && rep->enhancement_rep_index_plus_one) {

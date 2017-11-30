@@ -696,16 +696,25 @@ u64 mpdin_dash_io_get_utc_start_time(GF_DASHFileIO *dashio, GF_DASHFileIOSession
 }
 
 
-u32 mpdin_dash_io_get_air_bytes_per_sec(GF_DASHFileIO *dashio, GF_DASHFileIOSession session)
+u32 mpdin_dash_io_get_air_bytes_per_sec_mean(GF_DASHFileIO *dashio, GF_DASHFileIOSession session)
 {
-	u32 bps=0;
+	u32 mean=0;
 //	GF_DownloadSession *sess = (GF_DownloadSession *)session;
 	if (session) {
-		gf_dm_sess_get_air_stats((GF_DownloadSession *)session, &bps);
+		gf_dm_sess_get_air_stats((GF_DownloadSession *)session, &mean, NULL);
 	}
-	return bps;
+	return mean;
 }
 
+u32 mpdin_dash_io_get_air_bytes_per_sec_std(GF_DASHFileIO *dashio, GF_DASHFileIOSession session)
+{
+	u32 std=0;
+//	GF_DownloadSession *sess = (GF_DownloadSession *)session;
+	if (session) {
+		gf_dm_sess_get_air_stats((GF_DownloadSession *)session, NULL, &std);
+	}
+	return std;
+}
 u32 mpdin_dash_io_get_bytes_per_sec(GF_DASHFileIO *dashio, GF_DASHFileIOSession session)
 {
 	u32 bps=0;
@@ -992,7 +1001,8 @@ GF_Err MPD_ConnectService(GF_InputService *plug, GF_ClientService *serv, const c
 	mpdin->dash_io.get_header_value = mpdin_dash_io_get_header_value;
 	mpdin->dash_io.get_utc_start_time = mpdin_dash_io_get_utc_start_time;
 	mpdin->dash_io.get_bytes_per_sec = mpdin_dash_io_get_bytes_per_sec;
-	mpdin->dash_io.get_air_bytes_per_sec = mpdin_dash_io_get_air_bytes_per_sec;
+	mpdin->dash_io.get_air_bytes_per_sec_mean = mpdin_dash_io_get_air_bytes_per_sec_mean;
+	mpdin->dash_io.get_air_bytes_per_sec_std = mpdin_dash_io_get_air_bytes_per_sec_std;
 	mpdin->dash_io.get_total_size = mpdin_dash_io_get_total_size;
 	mpdin->dash_io.get_bytes_done = mpdin_dash_io_get_bytes_done;
 	mpdin->dash_io.on_dash_event = mpdin_dash_io_on_dash_event;
